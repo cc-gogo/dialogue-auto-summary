@@ -1,0 +1,18 @@
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# 依赖
+node_modules/
+
+# 本地生成物
+*.log
+summary-state/
+*.bak-*
+
+# 个人配置（可能含真实路径与凭据）
+summary-config.json
+config.local.json
