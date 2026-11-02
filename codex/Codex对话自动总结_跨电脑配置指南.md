@@ -1,7 +1,8 @@
 # Codex 对话自动总结：跨电脑配置指南
 
 > 用途：将本文交给另一台电脑上的 Codex，或具备本地执行能力的兼容助手，按本文实际部署。
-> 本文自包含：末尾提供完整程序、配置模板、手动技能和测试源码。转发单独这一份 Markdown 即可；若收到部署包，可直接使用 program 目录中的同份源码。
+> 本文自包含：末尾提供完整程序、配置模板、手动技能和测试源码。只需转发这一份 Markdown，接收方可从附录提取文件并完成配置。
+> 更新内容：支持删除原始对话后，自动清理对应摘要、摘要索引条目和可关联的内部缓存。新安装先确认保留规则，再开启自动清理；已有安装可按第9节补充升级。
 > 本方案最初在 Windows、Node.js 24、Codex 0.166.0-alpha.5.1 上验证。其他系统和版本必须在目标机验收，不能仅凭产品名称判断兼容。
 
 ## 0. 给执行配置的 AI：第一步必须问，等用户回答
@@ -24,6 +25,9 @@
 - 压缩前和会话结束时后台总结。手动 Compact 也属于压缩触发；不安装每轮回答结束的 Stop 钩子。
 - 支持手动总结、离线同步标题、失败重试和队列恢复。新增文字不足80字时先累计。
 - 总结使用目标机已有 Codex 服务，会产生额外模型用量；图片只有文件引用时，不会自动识别图片内容。
+- 可选的删除同步：定期检查原始记录是否仍存在；持续缺失并经过等待复查后，清理本程序登记的对应摘要及缓存。清理不调用模型，Windows 下由当前用户的独立计划任务运行，详见第9节。
+
+Markdown 是工作摘要，便于回顾和交接，并非原始对话、代码和附件的完整备份。开启删除同步后，原始记录删除也会带走对应摘要；选择保留模式时，摘要继续作为独立档案保留。
 
 运行条件是“本地文件及命令执行能力 + Codex CLI + 本地兼容会话记录和 hooks”。普通 ChatGPT 桌面聊天不自动具备这些条件。对于 ChatGPT Work 等环境，先确认实际编排和执行模式：云端编排即使连接了本地工具，也不等于支持本方案的本地命令钩子。缺少能力时说明缺失项及可行的本地 Codex 入口，不声称已安装成功，也不把普通 ChatGPT 聊天冒充 Codex 会话。
 
@@ -35,7 +39,7 @@
 2. 找到能运行的 Codex CLI，检查 --version、exec --help、features list。需要支持 hooks、exec、--ephemeral、--output-schema、--sandbox；确认 hooks 没被用户或管理策略禁用。能力缺失时说明并处理版本问题，不能忽略后声称自动触发可用。
 3. 确认 CODEX_HOME：优先使用目标进程已有 CODEX_HOME，否则取该用户主目录下的 .codex。不要将开发电脑的用户名、磁盘路径、CLI版本目录或模型名照搬过去。
 4. 检查本地记录是否真的在 CODEX_HOME/sessions 与 archived_sessions；侧栏标题索引通常是 CODEX_HOME/session_index.jsonl。实际位置不同时，按目标机记录和 hook 的 transcript_path 适配。
-5. 从目标机现有配置确定模型及服务，复用其认证；不要复制本部署包开发者的账户、密钥或服务地址，也不要输出 auth.json 正文。没有明确模型时选择目标机当前配置的模型；reasoningEffort 选该模型支持的较低档位。
+5. 从目标机现有配置确定模型及服务，复用其认证；不要复制文档作者的账户、密钥或服务地址，也不要输出 auth.json 正文。没有明确模型时选择目标机当前配置的模型；reasoningEffort 选该模型支持的较低档位。
 6. 找到可直接执行的 Codex 程序绝对路径。Windows 桌面版可使用实际安装目录里的 codex.exe；不能把 codex.cmd 当作原生 exe 直接交给 spawnSync。macOS/Linux 使用目标机可执行的 codex 入口。
 
 变量约定：
@@ -54,7 +58,7 @@
 ## 3. 安装程序并生成目标机配置
 
 1. 建立 PROGRAM_DIR、STATE_DIR、SKILL_DIR 和用户指定的 SUMMARY_DIR。
-2. 将附录的 summary.cjs、schema.json、summary.test.cjs、install.cjs、review-hooks.cjs，分别保存到 PROGRAM_DIR。若有部署包，直接复制 program 中的这些文件。
+2. 从本文附录提取 summary.cjs、schema.json、summary.test.cjs、cleanup.cjs、cleanup.test.cjs、install-cleanup.ps1、install.cjs、review-hooks.cjs，分别保存到 PROGRAM_DIR。保留代码块中的原文和换行，不把代码围栏写进程序文件。Windows 的 .ps1 文件建议保存为带 BOM 的 UTF-8，保证 Windows PowerShell 5.1 正确识别中文。
 3. 根据附录 config.example.json，在 PROGRAM_DIR 生成真正的 config.json。所有占位符必须替换为目标机实际值。stateDir、codexHome、codexExe、model、timeZone 均来自上一步的环境检查；minChars=80、chunkChars=35000、timeoutMs=180000、maxAttempts=3 可保持默认。
 4. 将 SKILL.template.md 的 {{SUMMARY_DIR}}、{{PROGRAM_DIR}}、{{STATE_DIR}} 替换为实际目录，保存为 SKILL_DIR/SKILL.md。路径以目标机可用形式填写，终端示例按其 shell 调整。
 
@@ -79,6 +83,7 @@ install.cjs 会读取刚生成的 config.json，将 PreCompact 和 SessionEnd �
 ```text
 node --check "<PROGRAM_DIR>/summary.cjs"
 node --test "<PROGRAM_DIR>/summary.test.cjs"
+node --test "<PROGRAM_DIR>/cleanup.test.cjs"
 node "<PROGRAM_DIR>/summary.cjs" --status
 node "<PROGRAM_DIR>/summary.cjs" --list
 ```
@@ -131,7 +136,139 @@ SessionEnd 在正常结束会话时触发；仅切换聊天不会立刻触发。
 - 说“同步摘要标题”，只更新文件名、正文标题与索引，不调用模型。
 - 日常自动触发只覆盖压缩前和会话结束；也支持指定 UUID 手动补总结。
 - 查历史摘要先读 SUMMARY_DIR/INDEX.md；状态及日志在 STATE_DIR。
+- 若明确启用删除同步，日常删除原始记录后无需额外指令；Windows 计划任务负责检查。只归档聊天会保留摘要。查询、暂停和故障排查见第9节。
 - 若后续 Codex 升级改变 transcript 格式，先适配解析器并重新验收。不要修改或删除原始会话记录。
+
+## 9. 可选：删除原始记录后自动清理摘要
+
+### 9.1 先确认保留规则
+
+先遵守第0节：询问保存文件夹并等到明确回复。随后，在配置删除同步之前，再询问：
+
+**原始对话记录删除后，你希望对应的 Markdown 摘要怎么处理？**
+
+- 自动一起删除：清理对应摘要、摘要索引条目和可关联的内部缓存。
+- 保留摘要：继续作为独立档案保存。
+
+同一次配置请求或已有会话中已明确选择时，沿用该选择，不重复询问。没有明确答案时保持 `autoDeleteMissingTranscripts=false`，可以继续配置总结功能，但不能开启删除任务。已选择保留摘要时，不注册清理任务。
+
+该规则也适用于开启功能之前就已经缺少原始记录的历史摘要。执行的是文件系统删除，不会送入回收站；关闭功能不会恢复已经清理的摘要。程序只检查本机文件，不会删除用户另存的副本或云端历史版本。
+
+### 9.2 删除条件、范围和时间
+
+原始记录通常是 `.jsonl`。程序依据完整会话 UUID 和文件中的 `session_meta.id` 关联，不能只用标题、文件名中的短 ID 或最近修改时间匹配。
+
+每次检查递归读取 `CODEX_HOME/sessions` 和 `CODEX_HOME/archived_sessions`。符合以下条件才清理：
+
+1. 对应摘要已有本程序登记的会话状态。
+2. 两个源目录都找不到该完整 UUID，状态中记录的原始文件路径也已不存在。
+3. 首次发现缺失后，至少经过 `missingTranscriptGraceMs` 指定的等待时间。
+4. 再次扫描仍缺失，并且摘要路径、完整会话 ID 和文件归属校验通过。
+
+清理范围如下：
+
+| 内容 | 处理方式 |
+|---|---|
+| 本程序登记的对应 `.md` | 校验位于 SUMMARY_DIR 且正文含匹配的完整会话 ID 后删除 |
+| `SUMMARY_DIR/INDEX.md` | 重建摘要索引，移除该会话条目 |
+| `STATE_DIR/sessions/<UUID>.json` | 删除内部摘要状态，避免之后从缓存重建该文档 |
+| `STATE_DIR/jobs`、`failed`、`staging` | 只删除 `sessionId` 完整匹配的任务和分块缓存 |
+| `STATE_DIR/work` | 只删除能由匹配分块缓存明确关联的模型输出文件 |
+| `STATE_DIR/missing-transcripts.json` | 保存缺失会话 ID 和首次发现时间；清理或恢复后移除对应计时 |
+
+原始对话、Codex 自身的 `session_index.jsonl`、其他会话摘要、手写 Markdown、本文及其他配置文件不属于清理对象。没有归属信息的旧缓存不按文件名猜测删除。历史摘要如果已经失去内部会话状态，也不会仅凭 `.md` 文件名推断并删除。
+
+归档到 `archived_sessions`、在这两个目录内移动日期子目录或改名，只要记录仍可读取并匹配 UUID，就保留摘要。等待期间恢复原始记录，会取消此次缺失计时。将原始记录迁移到这两个目录之外会失去追踪，迁移前应暂停自动清理。
+
+源目录不可访问、记录元数据无法解析、文件归属不符或遇到不允许的目录链接时，本次检查会停止，不把扫描失败当作“记录已删除”。Windows 的扩展路径前缀也按同一来源判断。
+
+默认每5分钟扫描一次，首次发现缺失后至少再等5分钟；持续登录且任务正常运行时，通常在删除原始记录后的5—10分钟清理。睡眠、关机、注销、锁等待或检查失败会延后处理。此任务独立于总结钩子，不需要打开 Codex，不会因为每轮对话而调用模型。
+
+### 9.3 Windows 配置与实际验收
+
+仅在用户已明确选择自动一起删除后，在现有 `PROGRAM_DIR/config.json` 中合并以下字段，保留其他配置：
+
+```json
+{
+  "autoDeleteMissingTranscripts": true,
+  "missingTranscriptGraceMs": 300000
+}
+```
+
+`300000` 的单位为毫秒，即5分钟；程序要求至少 `60000` 毫秒。等待时间和扫描周期是两回事：修改此字段不会更改计划任务每5分钟运行的频率。
+
+先运行预览。预览不会删除文件，也不会启动或延长缺失计时。若发现源目录配置错误、用户迁移过记录或历史摘要待清理范围不符，先修正实际路径和状态，再继续。
+
+以下命令中的 `<PROGRAM_DIR>` 均替换为目标机的实际程序目录，在目标机 PowerShell 中执行：
+
+```powershell
+node "<PROGRAM_DIR>/summary.cjs" --preview-cleanup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<PROGRAM_DIR>/install-cleanup.ps1"
+Get-ScheduledTask -TaskName 'Codex-DialogueSummary-Cleanup' | Select-Object TaskName, State, Actions, Triggers, Principal
+Start-ScheduledTask -TaskName 'Codex-DialogueSummary-Cleanup'
+```
+
+安装脚本为当前用户注册或更新同名任务，使用当前机器实际的 `node.exe` 路径，并生成 `PROGRAM_DIR/run-cleanup.ps1` 作为入口。入口由脚本生成，不需要另行提取。任务每5分钟及该用户登录时执行，使用隐藏窗口和普通用户权限。重复安装不会叠加同名任务。`-ExecutionPolicy Bypass` 仅作用于本次脚本进程，不要求永久修改系统执行策略。
+
+稍等任务从 `Running` 回到 `Ready` 后，读取实际结果；不要以刚注册、尚未执行时显示的默认状态作为成功证据：
+
+```powershell
+Get-ScheduledTask -TaskName 'Codex-DialogueSummary-Cleanup' | Select-Object TaskName, State
+Get-ScheduledTaskInfo -TaskName 'Codex-DialogueSummary-Cleanup' | Select-Object LastRunTime, LastTaskResult, NextRunTime
+node "<PROGRAM_DIR>/summary.cjs" --status
+node "<PROGRAM_DIR>/summary.cjs" --preview-cleanup
+```
+
+确认 `LastRunTime` 是刚才的实际执行时间、`LastTaskResult=0`，且 `--status` 显示 `autoDeleteMissingTranscripts=true`、等待时间和摘要目录正确。首次任务运行可能只登记缺失并进入等待，返回0不代表已经删除文件。
+
+如需验证删除结果，使用临时测试夹具执行附录的 `cleanup.test.cjs`，不要删除真实聊天来做试验。真实存在的待清理摘要，在等待时间届满后由任务复查；对照 `INDEX.md`、对应会话状态是否移除，以及 `STATE_DIR/summary.log` 中的 `deleted_missing session=<UUID>` 核实。日志仍可能保留会话 ID 或原有错误信息，这项功能不等于清空所有历史日志。
+
+没有任务注册权限时，说明实际错误和仍缺少的步骤；不要声称已开启定期清理。macOS/Linux 的清理程序可用同一命令，但本文只提供 Windows 调度脚本；其他系统需要另行配置并验证该系统的用户级调度器。
+
+### 9.4 手动检查及返回结果
+
+```text
+node "<PROGRAM_DIR>/summary.cjs" --preview-cleanup
+node "<PROGRAM_DIR>/summary.cjs" --cleanup-missing
+```
+
+`--cleanup-missing` 按配置执行一次检查，仍遵守等待和复查规则，不会跳过缓冲时间；开关为 false 时返回 `disabled`。这两条命令都不调用模型。
+
+| 返回状态 | 含义 |
+|---|---|
+| `disabled` | 自动清理开关未开启，本次没有清理 |
+| `retained` | 找到原始记录，保留摘要并取消缺失计时 |
+| `missing-awaiting-recheck` | 预览发现原始记录缺失，但尚未满足等待条件 |
+| `would-delete` | 预览判断已满足等待条件；正式执行仍会复查 |
+| `waiting` | 正式检查已登记缺失，等待下一次复查 |
+| `deleted` | 已清理该会话的对应摘要和可关联缓存 |
+
+`preview` 和 `checked` 是整次扫描的顶层状态，具体会话的结果在 `results` 数组里。没有输出 `deleted` 时不要声称删除已完成。出现错误时检查任务返回码和 `STATE_DIR/summary.log`，修正问题后重试，不通过删除状态、改时间戳或去掉所有权校验来强行清理。
+
+### 9.5 暂停、保留和恢复
+
+要保留之后的摘要，将 `config.json` 中的 `autoDeleteMissingTranscripts` 改为 `false`。计划任务即使仍运行也不会删除摘要。要同时移除后台任务，执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<PROGRAM_DIR>/install-cleanup.ps1" -Remove
+Get-ScheduledTask -TaskName 'Codex-DialogueSummary-Cleanup' -ErrorAction SilentlyContinue
+```
+
+修改开关不会中断已经开始的清理；需要立即暂停时，先用 `Stop-ScheduledTask -TaskName 'Codex-DialogueSummary-Cleanup'` 停止当前任务，再关闭开关或移除任务。不要把仅移除计划任务误当作关闭配置：开关仍为 true 时，手动执行 `--cleanup-missing` 仍可清理。
+
+恢复时先预览，再将开关设为 true 并重新运行安装脚本。暂停不会自动清除已记录的缺失时间，恢复后可能在第一次扫描就满足等待条件；需要保留的原始记录应先恢复到源目录。已删除的摘要不会自动恢复；若保有原始记录，恢复记录后可重新手动总结，但这会使用模型额度。
+
+### 9.6 已有安装只补充本功能
+
+对已经安装总结功能的机器，不需要从第0节重新安装。先读取现有保存目录和配置；用户未要求改目录时沿用，不重复询问已明确的保存路径。只确认尚未明确的删除保留规则。
+
+1. 暂停已有的清理任务，备份将被替换的程序文件和配置，保持既有摘要及会话状态。
+2. 从本文附录更新 `summary.cjs`、`summary.test.cjs`，补充或更新 `cleanup.cjs`、`cleanup.test.cjs`、`install-cleanup.ps1`。主程序也必须更新，因为它包含新命令入口、Windows 路径兼容、缓存关联和总结期间原始记录被删除时的处理。
+3. 在原 `config.json` 合并两个清理字段，保留模型、服务、已有目录和其他设置；不要拿示例配置覆盖原文件。
+4. 在原手动技能中补充删除同步的使用规则，可参考附录 `SKILL.template.md`，保留已填写的本机路径。只更新已有 hook 的脚本内容时，不重新注册重复钩子；按实际客户端的信任提示处理。
+5. 执行语法检查和两组临时目录测试，再按9.3节预览、安装调度并验收实际执行。当前附录共34项测试，其中10项覆盖删除同步；以目标机测试输出为准，失败时先修复，不跳过。
+
+向用户交付时说明实际保存目录、删除保留规则、扫描周期、等待时间及任务实际执行结果。明确区分“进入等待”“已清理”和“尚未配置本平台调度”，不要把其他机器的测试或本机用户的配置选择当作目标机已完成。
 
 ## 官方参考
 
@@ -200,7 +337,8 @@ function log(c, message) {
 }
 
 function isWithin(candidate, root) {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  // Codex hooks may emit Windows extended-length paths (\\?\C:\...).
+  const relative = path.relative(path.toNamespacedPath(path.resolve(root)), path.toNamespacedPath(path.resolve(candidate)));
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
 }
 
@@ -608,7 +746,7 @@ function renderPart(p) {
 async function rebuildIndex(c) {
   return withLock(path.join(c.stateDir, 'locks', 'index.lock'), async () => {
     const states = fs.readdirSync(path.join(c.stateDir, 'sessions')).filter(n => n.endsWith('.json'))
-      .map(n => readJson(path.join(c.stateDir, 'sessions', n))).filter(s => s.file && isWithin(s.file, c.summaryDir));
+      .map(n => readJson(path.join(c.stateDir, 'sessions', n), null)).filter(s => s && s.file && isWithin(s.file, c.summaryDir));
     states.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const lines = ['# Codex 对话总结索引', '', ...states.map(s => '- ' + fmtTime(s.updatedAt, c.timeZone) +
       ' · **' + s.title.replace(/[\r\n*]/g, ' ') + '** · ' + projectTag(s.meta.cwd) + ' · ' +
@@ -663,7 +801,9 @@ async function summarize(c, job, model = callModel) {
     const chunks = chunkMessages(parsed.messages, c.chunkChars);
     const runKey = digest(JSON.stringify({ id: job.sessionId, cursor: old && old.cursor, chunks, model: c.model, effort: c.reasoningEffort }));
     const stagingFile = path.join(c.stateDir, 'staging', runKey + '.json');
-    const staged = readJson(stagingFile, { parts: [] });
+    const staged = readJson(stagingFile, { sessionId: job.sessionId, parts: [] });
+    staged.sessionId = job.sessionId;
+    writeJson(stagingFile, staged);
     let title = sidebarTitle || old && old.title || '', overview = old && old.overview || '';
     const parts = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -676,6 +816,16 @@ async function summarize(c, job, model = callModel) {
       if (!title) title = safeName(out.title, 30);
       overview = out.overview;
       parts.push(out);
+    }
+    // The user may delete or archive the source while the model is running.
+    if (!fs.existsSync(transcript)) {
+      try { transcript = locateSession(c, job.sessionId); }
+      catch (err) {
+        if (!String(err.message).startsWith('Session record not found:')) throw err;
+        try { fs.unlinkSync(stagingFile); } catch {}
+        log(c, 'skip_deleted_during_summary ' + job.sessionId);
+        return { status: 'missing' };
+      }
     }
     const latestSidebarTitle = readThreadTitle(c, job.sessionId);
     title = latestSidebarTitle || title;
@@ -751,6 +901,8 @@ async function drain(c, model) {
 
 function status(c) {
   return { model: c.model, reasoningEffort: c.reasoningEffort, summaryDir: c.summaryDir, stateDir: c.stateDir,
+    autoDeleteMissingTranscripts: c.autoDeleteMissingTranscripts === true,
+    missingTranscriptGraceMs: c.missingTranscriptGraceMs ?? 300000,
     summaries: fs.readdirSync(path.join(c.stateDir, 'sessions')).filter(n => n.endsWith('.json')).length,
     queued: fs.readdirSync(path.join(c.stateDir, 'jobs')).filter(n => n.endsWith('.json')).length,
     failed: fs.readdirSync(path.join(c.stateDir, 'failed')).filter(n => n.endsWith('.json')).length };
@@ -763,6 +915,10 @@ async function main(argv = process.argv.slice(2)) {
   const c = config(configFile);
   try {
     if (argv[0] === '--status') { console.log(JSON.stringify(status(c), null, 2)); return; }
+    if (argv[0] === '--cleanup-missing' || argv[0] === '--preview-cleanup') {
+      const { cleanupMissing } = require('./cleanup.cjs');
+      console.log(JSON.stringify(await cleanupMissing(c, { preview: argv[0] === '--preview-cleanup' }), null, 2)); return;
+    }
     if (argv[0] === '--sync-titles') { console.log(JSON.stringify(await syncTitles(c, argv[1]), null, 2)); return; }
     if (argv[0] === '--list') {
       for (const root of ['sessions', 'archived_sessions']) for (const file of walkFiles(path.join(c.codexHome, root))) {
@@ -789,7 +945,7 @@ async function main(argv = process.argv.slice(2)) {
       else console.log('没有新内容需要总结（距上次总结后新增内容太少）。' + (out.file ? '\n现有摘要：' + out.file : ''));
       return;
     }
-    if (argv[0] !== '--hook') throw Error('Usage: summary.cjs --manual [sessionUUID] | --sync-titles [sessionUUID] | --list | --status | --drain | --retry-failed | --hook');
+    if (argv[0] !== '--hook') throw Error('Usage: summary.cjs --manual [sessionUUID] | --sync-titles [sessionUUID] | --cleanup-missing | --preview-cleanup | --list | --status | --drain | --retry-failed | --hook');
     const raw = fs.readFileSync(0, 'utf8').replace(/^\uFEFF/, '');
     const input = JSON.parse(raw || '{}');
     const job = makeJob(c, input); if (!job) return;
@@ -805,7 +961,7 @@ async function main(argv = process.argv.slice(2)) {
 
 module.exports = { config, atomicWrite, readJson, writeJson, cleanText, contentText, locateSession, parseTranscript,
   chunkMessages, summarize, makeJob, enqueue, drain, status, renderMarkdown, rebuildIndex, isWithin, modelArgs,
-  readThreadTitle, syncTitles, outputName, GUARD, main };
+  readThreadTitle, syncTitles, outputName, readMeta, withLock, GUARD, main };
 if (require.main === module) main().catch(err => { console.error(safeError(err)); process.exitCode = 1; });
 ```
 
@@ -1123,6 +1279,337 @@ test('a rename arriving during model generation wins over its earlier title', as
 });
 ```
 
+### cleanup.cjs
+
+```javascript
+'use strict';
+// Cleanup only records owned by this installation. Never remove source transcripts.
+const fs = require('node:fs');
+const path = require('node:path');
+const s = require('./summary.cjs');
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function inventory(c) {
+  const ids = new Set();
+  function walk(dir) {
+    const stat = fs.lstatSync(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error('Cleanup source directory unavailable or linked: ' + dir);
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isSymbolicLink()) throw Error('Cleanup source contains a symbolic link; scan aborted.');
+      if (entry.isDirectory()) walk(file);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const meta = s.readMeta(file);
+        if (!UUID.test(meta.id || '')) throw Error('Cleanup source has invalid session metadata; scan aborted.');
+        ids.add(meta.id.toLowerCase());
+      }
+    }
+  }
+  // If the source volume/home is unavailable, fail closed instead of deleting every summary.
+  walk(path.join(c.codexHome, 'sessions'));
+  const archive = path.join(c.codexHome, 'archived_sessions');
+  try { fs.lstatSync(archive); } catch (err) { if (err.code === 'ENOENT') return ids; throw err; }
+  walk(archive);
+  return ids;
+}
+
+function managedFile(file, root) {
+  if (!s.isWithin(file, root) || path.resolve(file) === path.resolve(root)) throw Error('Cleanup target outside managed directory');
+  if (fs.lstatSync(root).isSymbolicLink()) throw Error('Cleanup managed directory is linked');
+  const rootReal = fs.realpathSync(root);
+  const parentReal = fs.realpathSync(path.dirname(file));
+  if (!s.isWithin(parentReal, rootReal)) throw Error('Cleanup target parent escapes managed directory');
+  let stat;
+  try { stat = fs.lstatSync(file); } catch (err) { if (err.code === 'ENOENT') return false; throw err; }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw Error('Cleanup target is not a regular managed file');
+  return true;
+}
+
+function deletionTargets(c, state, stateFile) {
+  const id = state.sessionId;
+  if (!UUID.test(id || '') || state.meta?.id !== id || path.basename(stateFile) !== id + '.json') throw Error('Cleanup state/session ID mismatch');
+  if (!state.transcript || !['sessions', 'archived_sessions'].some(d => s.isWithin(state.transcript, path.join(c.codexHome, d)))) {
+    throw Error('Cleanup state has an unrecognized source location');
+  }
+  if (!state.file || path.dirname(path.resolve(state.file)) !== path.resolve(c.summaryDir) || path.extname(state.file) !== '.md') {
+    throw Error('Cleanup summary path is not an owned Markdown file');
+  }
+  const targets = [];
+  if (managedFile(state.file, c.summaryDir)) {
+    if (!fs.readFileSync(state.file, 'utf8').split(/\r?\n/).includes('- 对话 ID：' + id)) throw Error('Cleanup summary ownership mismatch');
+    targets.push(state.file);
+  }
+  for (const dir of ['jobs', 'failed', 'staging']) {
+    const root = path.join(c.stateDir, dir);
+    for (const name of fs.readdirSync(root).filter(n => n.endsWith('.json'))) {
+      const file = path.join(root, name);
+      managedFile(file, root);
+      const data = s.readJson(file);
+      if (data.sessionId !== id) continue;
+      targets.push(file);
+      if (dir === 'staging' && /^[a-f0-9]{64}\.json$/.test(name)) {
+        const prefix = name.slice(0, -5) + '-';
+        const workRoot = path.join(c.stateDir, 'work');
+        for (const workName of fs.readdirSync(workRoot)) {
+          if (workName.startsWith(prefix) && /^\d+\.json$/.test(workName.slice(prefix.length))) {
+            const workFile = path.join(workRoot, workName);
+            if (managedFile(workFile, workRoot)) targets.push(workFile);
+          }
+        }
+      }
+    }
+  }
+  // Remove canonical state last, allowing an interrupted cleanup to retry.
+  if (managedFile(stateFile, path.join(c.stateDir, 'sessions'))) targets.push(stateFile);
+  return targets;
+}
+
+async function cleanupMissing(c, { preview = false, now = Date.now() } = {}) {
+  if (!preview && c.autoDeleteMissingTranscripts !== true) return { status: 'disabled', results: [] };
+  const grace = c.missingTranscriptGraceMs ?? 300000;
+  if (!Number.isInteger(grace) || grace < 60000) throw Error('Cleanup grace period must be at least 60000ms');
+  return s.withLock(path.join(c.stateDir, 'locks', 'cleanup.lock'), async () => {
+    const present = inventory(c);
+    const markerFile = path.join(c.stateDir, 'missing-transcripts.json');
+    const markers = s.readJson(markerFile, {});
+    const results = [];
+    let changed = false;
+    try {
+      for (const name of fs.readdirSync(path.join(c.stateDir, 'sessions')).filter(n => UUID.test(n.slice(0, -5)) && n.endsWith('.json'))) {
+        const id = name.slice(0, -5), stateFile = path.join(c.stateDir, 'sessions', name);
+        await s.withLock(path.join(c.stateDir, 'locks', id + '.lock'), async () => {
+          if (!managedFile(stateFile, path.join(c.stateDir, 'sessions'))) return;
+          const state = s.readJson(stateFile);
+          if (present.has(id.toLowerCase())) {
+            delete markers[id];
+            results.push({ sessionId: id, title: state.title, status: 'retained' });
+            return;
+          }
+          // Also preserve files moved outside the standard trees if their old path still exists.
+          if (state.transcript && fs.existsSync(state.transcript)) {
+            delete markers[id];
+            results.push({ sessionId: id, title: state.title, status: 'retained' });
+            return;
+          }
+          const targets = deletionTargets(c, state, stateFile);
+          const first = markers[id];
+          const ready = Number.isFinite(first) && now - first >= grace;
+          if (preview) {
+            results.push({ sessionId: id, title: state.title, status: ready ? 'would-delete' : 'missing-awaiting-recheck', file: state.file });
+            return;
+          }
+          if (!ready) {
+            if (!Number.isFinite(first) || first > now) markers[id] = now;
+            results.push({ sessionId: id, title: state.title, status: 'waiting', file: state.file });
+            return;
+          }
+          // Rescan after acquiring the session lock; archives/restores since the first scan win.
+          if (inventory(c).has(id.toLowerCase()) || fs.existsSync(state.transcript)) {
+            delete markers[id];
+            results.push({ sessionId: id, title: state.title, status: 'retained' });
+            return;
+          }
+          for (const target of targets) {
+            try { fs.unlinkSync(target); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+          }
+          changed = true;
+          delete markers[id];
+          fs.appendFileSync(path.join(c.stateDir, 'summary.log'), '[' + new Date().toISOString() + '] deleted_missing session=' + id + '\n', 'utf8');
+          results.push({ sessionId: id, title: state.title, status: 'deleted', file: state.file });
+        });
+      }
+    } finally {
+      if (!preview) {
+        // Markers contain only IDs/timestamps, never summary content.
+        for (const id of Object.keys(markers)) if (!fs.existsSync(path.join(c.stateDir, 'sessions', id + '.json'))) delete markers[id];
+        s.writeJson(markerFile, markers);
+        if (changed) await s.rebuildIndex(c);
+      }
+    }
+    return { status: preview ? 'preview' : 'checked', graceMs: grace, results };
+  });
+}
+
+module.exports = { cleanupMissing, inventory };
+```
+
+### cleanup.test.cjs
+
+```javascript
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const s = require('./summary.cjs');
+const { cleanupMissing } = require('./cleanup.cjs');
+const ID = '11111111-1111-4111-8111-111111111111';
+const OTHER = '22222222-2222-4222-8222-222222222222';
+async function fixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cleanup-test-'));
+  t.after(() => {
+    const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(root));
+    assert.ok(relative.startsWith('codex-cleanup-test-') && !relative.includes(path.sep));
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const cf = path.join(root, 'config.json');
+  s.writeJson(cf, { summaryDir: path.join(root, 'output'), stateDir: path.join(root, 'state'), codexHome: path.join(root, 'home'),
+    model: 'test', reasoningEffort: 'low', timeZone: 'Asia/Shanghai', minChars: 1, chunkChars: 1000, timeoutMs: 1000,
+    maxAttempts: 2, autoDeleteMissingTranscripts: true, missingTranscriptGraceMs: 60000 });
+  const c = s.config(cf);
+  fs.mkdirSync(path.join(c.codexHome, 'sessions'), { recursive: true });
+  const file = path.join(c.codexHome, 'sessions', 'rollout-' + ID + '.jsonl');
+  const raw = JSON.stringify({ type: 'session_meta', payload: { id: ID, cwd: root, timestamp: '2025-01-01T00:00:00Z' } }) + '\n' +
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', id: 'u', role: 'user', content: 'A useful conversation with a saved result.' } }) + '\n';
+  fs.writeFileSync(file, raw);
+  const model = () => ({ title: 'Example', overview: 'Overview.', did: 'Saved work.', conclusion: 'Done.', decision: 'None.', keywords: [] });
+  const job = { sessionId: ID, transcript: file, trigger: 'test' };
+  const output = await s.summarize(c, job, model);
+  return { root, c, file, raw, model, job, output, stateFile: path.join(c.stateDir, 'sessions', ID + '.json') };
+}
+const missingResult = out => out.results.find(r => r.sessionId === ID);
+
+test('deletes only owned summary, index entry, canonical cache, queued jobs and staged work after repeated absence', async t => {
+  const f = await fixture(t), key = 'a'.repeat(64);
+  const stage = path.join(f.c.stateDir, 'staging', key + '.json');
+  const work = path.join(f.c.stateDir, 'work', key + '-0.json');
+  s.writeJson(stage, { sessionId: ID, parts: [{ text: 'cache' }] }); s.writeJson(work, { text: 'cache' });
+  for (const dir of ['jobs', 'failed']) s.writeJson(path.join(f.c.stateDir, dir, 'job.json'), { sessionId: ID });
+  const otherJob = path.join(f.c.stateDir, 'jobs', 'other.json'); s.writeJson(otherJob, { sessionId: OTHER });
+  const guide = path.join(f.c.summaryDir, 'guide.md'); fs.writeFileSync(guide, 'Keep this guide.');
+  fs.unlinkSync(f.file);
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 100000 })).status, 'waiting');
+  assert.ok(fs.existsSync(f.output.file));
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 159999 })).status, 'waiting');
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 160000 })).status, 'deleted');
+  for (const file of [f.output.file, f.stateFile, stage, work, ...['jobs', 'failed'].map(d => path.join(f.c.stateDir, d, 'job.json'))]) assert.equal(fs.existsSync(file), false);
+  assert.ok(fs.existsSync(otherJob)); assert.ok(fs.existsSync(guide));
+  assert.ok(!fs.readFileSync(path.join(f.c.summaryDir, 'INDEX.md'), 'utf8').includes(ID));
+  assert.deepEqual(s.readJson(path.join(f.c.stateDir, 'missing-transcripts.json')), {});
+});
+
+test('archiving and renaming the source preserves the summary by full UUID', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  await cleanupMissing(f.c, { now: 100000 });
+  const archive = path.join(f.c.codexHome, 'archived_sessions'); fs.mkdirSync(archive);
+  fs.writeFileSync(path.join(archive, 'renamed.jsonl'), f.raw);
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 200000 })).status, 'retained');
+  assert.ok(fs.existsSync(f.output.file));
+  assert.deepEqual(s.readJson(path.join(f.c.stateDir, 'missing-transcripts.json')), {});
+});
+
+test('restoring a transcript resets the grace period', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  await cleanupMissing(f.c, { now: 100000 });
+  fs.writeFileSync(f.file, f.raw); await cleanupMissing(f.c, { now: 170000 });
+  fs.unlinkSync(f.file);
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 180000 })).status, 'waiting');
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 239999 })).status, 'waiting');
+  assert.ok(fs.existsSync(f.output.file));
+});
+
+test('Windows extended-length source paths match ordinary configured directories', async t => {
+  const f = await fixture(t);
+  const state = s.readJson(f.stateFile); state.transcript = path.toNamespacedPath(f.file); s.writeJson(f.stateFile, state);
+  fs.unlinkSync(f.file);
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 100000 })).status, 'waiting');
+  assert.equal(missingResult(await cleanupMissing(f.c, { now: 200000 })).status, 'deleted');
+});
+
+test('unavailable source tree aborts without marking or deleting anything', async t => {
+  const f = await fixture(t);
+  fs.renameSync(path.join(f.c.codexHome, 'sessions'), path.join(f.c.codexHome, 'offline'));
+  await assert.rejects(cleanupMissing(f.c), /ENOENT/);
+  assert.ok(fs.existsSync(f.output.file)); assert.ok(fs.existsSync(f.stateFile));
+  assert.ok(!fs.existsSync(path.join(f.c.stateDir, 'missing-transcripts.json')));
+});
+
+test('unreadable or malformed source metadata aborts the scan without deletion', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  await cleanupMissing(f.c, { now: 100000 });
+  fs.writeFileSync(path.join(f.c.codexHome, 'sessions', 'broken.jsonl'), '{broken');
+  await assert.rejects(cleanupMissing(f.c, { now: 200000 }), /Missing session_meta/);
+  assert.ok(fs.existsSync(f.output.file));
+});
+
+test('preview and disabled cleanup never delete or start the grace period', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  assert.equal(missingResult(await cleanupMissing(f.c, { preview: true })).status, 'missing-awaiting-recheck');
+  assert.ok(!fs.existsSync(path.join(f.c.stateDir, 'missing-transcripts.json')));
+  f.c.autoDeleteMissingTranscripts = false;
+  assert.equal((await cleanupMissing(f.c)).status, 'disabled');
+  assert.ok(fs.existsSync(f.output.file));
+});
+
+test('outside paths and mismatched ownership are refused', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  const state = s.readJson(f.stateFile), outside = path.join(f.root, 'personal.md');
+  fs.writeFileSync(outside, '- 对话 ID：' + ID); state.file = outside; s.writeJson(f.stateFile, state);
+  await assert.rejects(cleanupMissing(f.c), /owned Markdown/); assert.ok(fs.existsSync(outside));
+  state.file = f.output.file; s.writeJson(f.stateFile, state);
+  fs.writeFileSync(f.output.file, '- 对话 ID：' + OTHER);
+  await assert.rejects(cleanupMissing(f.c), /ownership mismatch/); assert.ok(fs.existsSync(f.output.file));
+});
+
+test('cleanup cannot follow a junction out of the cache directory', async t => {
+  const f = await fixture(t); fs.unlinkSync(f.file);
+  const outside = path.join(f.root, 'outside'); fs.mkdirSync(outside);
+  fs.renameSync(path.join(f.c.stateDir, 'jobs'), path.join(f.c.stateDir, 'old-jobs'));
+  try { fs.symlinkSync(outside, path.join(f.c.stateDir, 'jobs'), process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (err) { if (err.code === 'EPERM') { t.skip('Symlinks unavailable'); return; } throw err; }
+  const personal = path.join(outside, 'job.json'); s.writeJson(personal, { sessionId: ID });
+  // Every target must also be within the real configured state root.
+  await assert.rejects(cleanupMissing(f.c), /escapes managed directory|linked/);
+  assert.ok(fs.existsSync(personal)); assert.ok(fs.existsSync(f.output.file));
+});
+
+test('deletion during model execution does not resurrect a summary or keep new staged content', async t => {
+  const f = await fixture(t); fs.appendFileSync(f.file, JSON.stringify({ type: 'response_item', payload: { type: 'message', id: 'u2', role: 'user', content: 'More new work.' } }) + '\n');
+  const oldContent = fs.readFileSync(f.output.file, 'utf8');
+  const result = await s.summarize(f.c, f.job, () => { fs.unlinkSync(f.file); return f.model(); });
+  assert.equal(result.status, 'missing'); assert.equal(fs.readFileSync(f.output.file, 'utf8'), oldContent);
+  assert.deepEqual(fs.readdirSync(path.join(f.c.stateDir, 'staging')), []);
+  await cleanupMissing(f.c, { now: 100000 }); await cleanupMissing(f.c, { now: 200000 });
+  assert.ok(!fs.existsSync(f.output.file));
+  assert.equal((await s.summarize(f.c, { ...f.job, automatic: true }, f.model)).status, 'missing');
+  assert.ok(!fs.existsSync(f.output.file));
+});
+```
+
+### install-cleanup.ps1
+
+```powershell
+param([switch]$Remove)
+$ErrorActionPreference = 'Stop'
+$programDir = $PSScriptRoot
+$configFile = Join-Path $programDir 'config.json'
+$cleanupConfig = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json
+$taskName = 'Codex-DialogueSummary-Cleanup'
+if ($Remove) {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Output 'Cleanup scheduled task removed.'
+    exit
+}
+if ($cleanupConfig.autoDeleteMissingTranscripts -ne $true) { throw 'Enable autoDeleteMissingTranscripts in config.json before installing cleanup.' }
+$nodePath = (Get-Command node.exe -ErrorAction Stop).Source
+$scriptPath = Join-Path $programDir 'summary.cjs'
+$runnerPath = Join-Path $programDir 'run-cleanup.ps1'
+$nodeLiteral = $nodePath.Replace("'", "''")
+$scriptLiteral = $scriptPath.Replace("'", "''")
+$runner = "`$ErrorActionPreference = 'Stop'`r`n& '$nodeLiteral' '$scriptLiteral' --cleanup-missing`r`nexit `$LASTEXITCODE`r`n"
+[System.IO.File]::WriteAllText($runnerPath, $runner, (New-Object System.Text.UTF8Encoding($true)))
+$powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$action = New-ScheduledTaskAction -Execute $powershellPath -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $runnerPath + '"')
+$repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+$userName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$logon = New-ScheduledTaskTrigger -AtLogOn -User $userName
+$principal = New-ScheduledTaskPrincipal -UserId $userName -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($repeat, $logon) -Principal $principal -Settings $settings -Description 'Remove owned Codex summaries after source transcripts remain missing across repeated scans.' -Force | Out-Null
+Write-Output ('Installed ' + $taskName + ': every 5 minutes and at logon; hidden; no model calls.')
+```
+
 ### install.cjs
 
 ```javascript
@@ -1189,7 +1676,9 @@ else process.exitCode = child.status || 0;
   "minChars": 80,
   "chunkChars": 35000,
   "timeoutMs": 180000,
-  "maxAttempts": 3
+  "maxAttempts": 3,
+  "autoDeleteMissingTranscripts": false,
+  "missingTranscriptGraceMs": 300000
 }
 ```
 
@@ -1222,4 +1711,6 @@ node "{{PROGRAM_DIR}}/summary.cjs" --sync-titles
 ```
 
 可在 --sync-titles 后追加会话 UUID。同步标题不调用模型。程序负责去重、增量、索引和改名；不要再生成另一份重复摘要。查找历史摘要时优先阅读摘要目录的 INDEX.md。
+
+若本机已明确启用 autoDeleteMissingTranscripts，源记录在普通目录与归档目录均缺失、且经过等待和复查后，会自动删除对应 Markdown、索引条目、状态与可关联的摘要缓存。--preview-cleanup 只预览；--cleanup-missing 按配置执行，不调用模型。自动清理只针对已登记的摘要，不删除原始记录或部署文档。
 ````
