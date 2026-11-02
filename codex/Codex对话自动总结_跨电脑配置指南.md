@@ -412,11 +412,11 @@ function collectPaths(value, result, cwd, depth = 0) {
     }
     // Explicit attachment references and quoted absolute paths from tool commands.
     // Do not infer arbitrary filenames from prose or inspect tool stdout.
-    for (const m of value.matchAll(/(["'])([A-Za-z]:[\\/][^"'\r\n<>|]+)\1/g)) {
+    for (const m of value.matchAll(/(["'])((?:[A-Za-z]:[\\/]|[/])[^"'\r\n<>|]+)\1/g)) {
       const candidate = path.resolve(m[2]);
       try { if (fs.statSync(candidate).isFile()) result.add(candidate); } catch {}
     }
-    for (const m of value.matchAll(/^## [^\r\n]*?:\s*([A-Za-z]:[\\/][^\r\n]+)$/gm)) result.add(path.resolve(m[1].trim()));
+    for (const m of value.matchAll(/^## [^\r\n]*?:\s*((?:[A-Za-z]:[\\/]|[/])[^\r\n]+)$/gm)) result.add(path.resolve(m[1].trim()));
     // apply_patch bodies are data. Collect only file headers, never evaluate code.
     for (const m of value.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) {
       result.add(path.resolve(cwd || '.', m[1].trim()));
@@ -711,12 +711,17 @@ async function syncTitles(c, id) {
   return results;
 }
 function psQuote(value) { return "'" + String(value).replace(/'/g, "''") + "'"; }
+function restoreCommand(cwd, id) {
+  if (process.platform === 'win32') return (cwd ? 'Set-Location -LiteralPath ' + psQuote(cwd) + '; ' : '') + 'codex resume ' + id;
+  const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'";
+  return (cwd ? 'cd -- ' + quote(cwd) + ' && ' : '') + 'codex resume ' + id;
+}
 function renderMarkdown(state, c) {
   const meta = state.meta;
   const header = ['# ' + state.title, '', '- 项目：' + projectTag(meta.cwd), '- 工作目录：`' + (meta.cwd || '') + '`',
     '- 对话 ID：' + state.sessionId, '- 原始记录：[' + path.basename(state.transcript) + '](<' + state.transcript.replace(/\\/g, '/') + '>)',
     '- 开始时间：' + fmtTime(meta.timestamp, c.timeZone),
-    '- 恢复命令：`' + (meta.cwd ? 'Set-Location -LiteralPath ' + psQuote(meta.cwd) + '; ' : '') + 'codex resume ' + state.sessionId + '`',
+    '- 恢复命令：`' + restoreCommand(meta.cwd, state.sessionId) + '`',
     '- 总结模型：`' + c.model + '`（' + c.reasoningEffort + '）', '', '## 概览', '', state.overview];
   if (state.files.length) header.push('', '## 涉及文件', '', ...state.files.map(f => '- `' + f + '`'));
   for (const s of state.sections) {
@@ -1628,18 +1633,18 @@ else process.exitCode = child.status || 0;
 
 ```json
 {
-  "summaryDir": "D:\\\\<你的目录>\\\\Codex_Dialogue_Summary",
-  "stateDir": "C:\\\\Users\\\\<用户名>\\\\.codex\\\\summary-state",
-  "codexHome": "C:\\\\Users\\\\<用户名>\\\\.codex",
-  "codexExe": "C:\\\\Users\\\\<用户名>\\\\AppData\\\\Local\\\\OpenAI\\\\Codex\\\\bin\\\\<版本>\\\\codex.exe",
-  "model": "<你的模型>",
+  "summaryDir": "<用户回答的摘要保存文件夹的绝对路径>",
+  "stateDir": "<目标机CODEX_HOME>/summary-state",
+  "codexHome": "<目标机实际CODEX_HOME>",
+  "codexExe": "<目标机可运行的Codex可执行文件的绝对路径>",
+  "model": "<目标机现有服务支持的模型名称>",
   "reasoningEffort": "low",
-  "timeZone": "Asia/Shanghai",
+  "timeZone": "<目标机IANA时区，例如Asia/Shanghai>",
   "minChars": 80,
   "chunkChars": 35000,
   "timeoutMs": 180000,
   "maxAttempts": 3,
-  "autoDeleteMissingTranscripts": true
+  "autoDeleteMissingTranscripts": false
 }
 ```
 
